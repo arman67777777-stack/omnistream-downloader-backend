@@ -18,6 +18,12 @@ def get_base_ydl_opts():
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        # ইউটিউবের বট প্রটেকশন ও সাইন-ইন সমস্যা এড়াতে অ্যান্ড্রয়েড ক্লায়েন্ট এবং পোটেনশিয়াল বাইপাস যুক্ত করা
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+            }
+        }
     }
     
     # Render বা ক্লাউড সার্ভারের জন্য Environment Variable থেকে কুকি রিড করা
@@ -52,7 +58,7 @@ def normalize_url(url):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def health():
-    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.3'}), 200
+    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.4'}), 200
 
 @app.route('/api/health', methods=['GET'])
 def api_health():
