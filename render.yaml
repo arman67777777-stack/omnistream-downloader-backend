@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OmniStream AI — Render.com Deployment Blueprint
+# Deploy this file at the root of your backend repository.
+# Render auto-detects render.yaml and provisions the service.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: omnistream-ai-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon        # Options: oregon, frankfurt, singapore, ohio
+    plan: free            # Change to "starter" or "standard" for production
+    numInstances: 1
+
+    # Health check — Render pings this path to confirm the service is alive
+    healthCheckPath: /api/health
+
+    # Auto-deploy whenever you push to the main branch
+    autoDeploy: true
+    branch: main
+
+    # ── Environment Variables ─────────────────────────────────────────────
+    envVars:
+      - key: PORT
+        value: "8000"
+
+      - key: FLASK_ENV
+        value: production
+
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+
+    # ── Disk (optional: for caching yt-dlp cookies or temp files) ─────────
+    # Uncomment the block below if you want persistent temp storage.
+    # Free plan does not support disks; upgrade to Starter or higher.
+    # disk:
+    #   name: omnistream-tmp
+    #   mountPath: /tmp/omnistream
+    #   sizeGB: 1
