@@ -18,7 +18,6 @@ def get_base_ydl_opts():
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # ইউটিউবের বট প্রটেকশন ও সাইন-ইন সমস্যা এড়াতে অ্যান্ড্রয়েড ক্লায়েন্ট এবং পোটেনশিয়াল বাইপাস যুক্ত করা
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'web'],
@@ -58,7 +57,7 @@ def normalize_url(url):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def health():
-    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.4'}), 200
+    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.5'}), 200
 
 @app.route('/api/health', methods=['GET'])
 def api_health():
@@ -76,6 +75,8 @@ def get_info():
     
     url = normalize_url(raw_url)
     ydl_opts = get_base_ydl_opts()
+    
+    # এখানে ফরম্যাট সংক্রান্ত কোনো ঝামেলা এড়াতে শুধু বেসিক অপশন রাখা হয়েছে
     ydl_opts.update({
         'skip_download': True,
         'extract_flat': False,
@@ -166,7 +167,7 @@ def get_info():
 @app.route('/api/download', methods=['GET'])
 def download_video():
     raw_url = request.args.get('url', '').strip()
-    format_id = request.args.get('format_id', 'bestvideo+bestaudio/best').strip()
+    format_id = request.args.get('format_id', 'best').strip()
     
     if not raw_url:
         return jsonify({'error': 'No URL provided'}), 400
@@ -176,8 +177,13 @@ def download_video():
     output_template = os.path.join(tmpdir, '%(title)s.%(ext)s')
     
     ydl_opts = get_base_ydl_opts()
+    # শর্টস বা ভিডিও ডাউনলোডের সময় ফরম্যাট হ্যান্ডেলিং আরও নিরাপদ করা হলো
+    if format_id and format_id != 'best':
+        ydl_opts['format'] = f"{format_id}+bestaudio/best"
+    else:
+        ydl_opts['format'] = 'bestvideo+bestaudio/best/best'
+        
     ydl_opts.update({
-        'format': format_id + '+bestaudio/best' if 'bestaudio' not in format_id else format_id,
         'merge_output_format': 'mp4',
         'outtmpl': output_template,
         'postprocessors': [{
