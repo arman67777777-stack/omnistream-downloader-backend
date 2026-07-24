@@ -8,17 +8,43 @@ from flask_cors import CORS
 import yt_dlp
 
 app = Flask(__name__)
-
 # Allow all origins (lock this down to your Hugging Face Space domain in production)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Helper function to get base yt-dlp options (adds cookies.txt support if available)
+def get_base_ydl_opts():
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+    }
+    # যদি আপনার প্রজেক্ট ফোল্ডারে cookies.txt ফাইল আপলোড করা থাকে, তবে এটি স্বয়ংক্রিয়ভাবে ব্যবহার করবে
+    if os.path.exists('cookies.txt'):
+        opts['cookiefile'] = 'cookies.txt'
+    return opts
+
+# Helper function to normalize URLs (handles Facebook short/share links)
+def normalize_url(url):
+    # ফেসবুকের শর্ট বা শেয়ার লিংক হ্যান্ডেল করার জন্য
+    if 'facebook.com/share/' in url or 'fb.watch/' in url:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            )
+            with urllib.request.urlopen(req) as response:
+                return response.url
+        except Exception:
+            pass
+    return url
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route('/', methods=['GET'])
 def health():
-    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.0'}), 200
+    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.1'}), 200
 
 @app.route('/api/health', methods=['GET'])
 def api_health():
@@ -29,21 +55,20 @@ def api_health():
 # GET /api/info?url=<youtube_url>
 # Returns: title, thumbnail, duration, uploader, view_count, and formats list
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route('/api/info', methods=['GET'])
 def get_info():
-    url = request.args.get('url', '').strip()
-    if not url:
+    raw_url = request.args.get('url', '').strip()
+    if not raw_url:
         return jsonify({'error': 'No URL provided'}), 400
+    
+    url = normalize_url(raw_url)
 
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts.update({
         'skip_download': True,
         'extract_flat': False,
-        'nocheckcertificate': True,
         'format': 'bestvideo+bestaudio/best',
-    }
+    })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -114,51 +139,48 @@ def get_info():
 
     return jsonify(response_data), 200
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # YOUTUBE VIDEO DOWNLOAD ENDPOINT
 # GET /api/download?url=<youtube_url>&format_id=<format_id>
 # Streams the video directly to the client
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route('/api/download', methods=['GET'])
 def download_video():
-    url = request.args.get('url', '').strip()
+    raw_url = request.args.get('url', '').strip()
     format_id = request.args.get('format_id', 'bestvideo+bestaudio/best').strip()
-
-    if not url:
+    if not raw_url:
         return jsonify({'error': 'No URL provided'}), 400
+
+    url = normalize_url(raw_url)
 
     # Create a temporary directory for this download
     tmpdir = tempfile.mkdtemp()
     output_template = os.path.join(tmpdir, '%(title)s.%(ext)s')
 
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts.update({
         'format': format_id + '+bestaudio/best' if 'bestaudio' not in format_id else format_id,
         'merge_output_format': 'mp4',
         'outtmpl': output_template,
-        'nocheckcertificate': True,
         'postprocessors': [{
             'key': 'FFmpegVideoConvertor',
             'preferedformat': 'mp4',
         }],
-    }
+    })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             final_path = ydl.prepare_filename(info)
-            # Resolve merged output filename
-            if not os.path.exists(final_path):
-                base = os.path.splitext(final_path)[0]
-                for ext in ['mp4', 'mkv', 'webm']:
-                    candidate = base + '.' + ext
-                    if os.path.exists(candidate):
-                        final_path = candidate
-                        break
-
+            
+        # Resolve merged output filename
+        if not os.path.exists(final_path):
+            base = os.path.splitext(final_path)[0]
+            for ext in ['mp4', 'mkv', 'webm']:
+                candidate = base + '.' + ext
+                if os.path.exists(candidate):
+                    final_path = candidate
+                    break
     except yt_dlp.utils.DownloadError as e:
         return jsonify({'error': str(e)}), 422
     except Exception as e:
@@ -197,29 +219,25 @@ def download_video():
         direct_passthrough=True
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # YOUTUBE MP3 EXTRACTION ENDPOINT
 # GET /api/mp3?url=<youtube_url>
 # Downloads audio and converts to MP3 via ffmpeg, then streams to client
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route('/api/mp3', methods=['GET'])
 def download_mp3():
-    url = request.args.get('url', '').strip()
-
-    if not url:
+    raw_url = request.args.get('url', '').strip()
+    if not raw_url:
         return jsonify({'error': 'No URL provided'}), 400
 
+    url = normalize_url(raw_url)
     tmpdir = tempfile.mkdtemp()
     output_template = os.path.join(tmpdir, '%(title)s.%(ext)s')
 
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts.update({
         'format': 'bestaudio/best',
         'outtmpl': output_template,
-        'nocheckcertificate': True,
         'postprocessors': [
             {
                 'key': 'FFmpegExtractAudio',
@@ -231,7 +249,7 @@ def download_mp3():
                 'add_metadata': True,
             }
         ],
-    }
+    })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -239,7 +257,6 @@ def download_mp3():
             prepared = ydl.prepare_filename(info)
             base = os.path.splitext(prepared)[0]
             final_path = base + '.mp3'
-
     except yt_dlp.utils.DownloadError as e:
         return jsonify({'error': str(e)}), 422
     except Exception as e:
@@ -283,11 +300,9 @@ def download_mp3():
         direct_passthrough=True
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # ERROR HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({'error': 'Endpoint not found'}), 404
@@ -300,11 +315,9 @@ def method_not_allowed(e):
 def internal_error(e):
     return jsonify({'error': 'Internal server error'}), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
