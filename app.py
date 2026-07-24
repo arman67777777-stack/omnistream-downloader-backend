@@ -8,24 +8,31 @@ from flask_cors import CORS
 import yt_dlp
 
 app = Flask(__name__)
-# Allow all origins (lock this down to your Hugging Face Space domain in production)
+# Allow all origins (lock this down to your domain in production)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Helper function to get base yt-dlp options (adds cookies.txt support if available)
+# Helper function to get base yt-dlp options (supports Render Environment Variable for Cookies)
 def get_base_ydl_opts():
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
     }
-    # যদি আপনার প্রজেক্ট ফোল্ডারে cookies.txt ফাইল আপলোড করা থাকে, তবে এটি স্বয়ংক্রিয়ভাবে ব্যবহার করবে
-    if os.path.exists('cookies.txt'):
+    
+    # Render বা ক্লাউড সার্ভারের জন্য Environment Variable থেকে কুকি রিড করা
+    cookies_content = os.environ.get('YOUTUBE_COOKIES')
+    if cookies_content:
+        tmp_cookie = tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8')
+        tmp_cookie.write(cookies_content)
+        tmp_cookie.close()
+        opts['cookiefile'] = tmp_cookie.name
+    elif os.path.exists('cookies.txt'):
         opts['cookiefile'] = 'cookies.txt'
+        
     return opts
 
 # Helper function to normalize URLs (handles Facebook short/share links)
 def normalize_url(url):
-    # ফেসবুকের শর্ট বা শেয়ার লিংক হ্যান্ডেল করার জন্য
     if 'facebook.com/share/' in url or 'fb.watch/' in url:
         try:
             import urllib.request
@@ -44,7 +51,7 @@ def normalize_url(url):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def health():
-    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.1'}), 200
+    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.2'}), 200
 
 @app.route('/api/health', methods=['GET'])
 def api_health():
@@ -53,7 +60,6 @@ def api_health():
 # ─────────────────────────────────────────────────────────────────────────────
 # YOUTUBE INFO ENDPOINT
 # GET /api/info?url=<youtube_url>
-# Returns: title, thumbnail, duration, uploader, view_count, and formats list
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/api/info', methods=['GET'])
 def get_info():
@@ -81,7 +87,6 @@ def get_info():
     if not info:
         return jsonify({'error': 'Could not extract video information'}), 422
 
-    # Build clean formats list
     raw_formats = info.get('formats', [])
     formats = []
     for f in raw_formats:
@@ -99,11 +104,9 @@ def get_info():
         vbr = f.get('vbr')
         protocol = f.get('protocol', '')
 
-        # Only include downloadable formats (not dash manifests without extension)
         if protocol in ('m3u8', 'm3u8_native', 'f4m'):
             continue
 
-        # Include video formats with valid height
         if vcodec != 'none' and height:
             formats.append({
                 'format_id': format_id,
@@ -120,7 +123,6 @@ def get_info():
                 'abr': abr,
             })
 
-    # Sort by height descending
     formats.sort(key=lambda x: x.get('height', 0), reverse=True)
 
     response_data = {
@@ -142,7 +144,6 @@ def get_info():
 # ─────────────────────────────────────────────────────────────────────────────
 # YOUTUBE VIDEO DOWNLOAD ENDPOINT
 # GET /api/download?url=<youtube_url>&format_id=<format_id>
-# Streams the video directly to the client
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/api/download', methods=['GET'])
 def download_video():
@@ -152,8 +153,6 @@ def download_video():
         return jsonify({'error': 'No URL provided'}), 400
 
     url = normalize_url(raw_url)
-
-    # Create a temporary directory for this download
     tmpdir = tempfile.mkdtemp()
     output_template = os.path.join(tmpdir, '%(title)s.%(ext)s')
 
@@ -173,7 +172,6 @@ def download_video():
             info = ydl.extract_info(url, download=True)
             final_path = ydl.prepare_filename(info)
             
-        # Resolve merged output filename
         if not os.path.exists(final_path):
             base = os.path.splitext(final_path)[0]
             for ext in ['mp4', 'mkv', 'webm']:
@@ -195,12 +193,11 @@ def download_video():
         try:
             with open(final_path, 'rb') as f:
                 while True:
-                    chunk = f.read(65536)  # 64KB chunks
+                    chunk = f.read(65536)
                     if not chunk:
                         break
                     yield chunk
         finally:
-            # Clean up temp files after streaming
             try:
                 os.remove(final_path)
                 os.rmdir(tmpdir)
@@ -222,7 +219,6 @@ def download_video():
 # ─────────────────────────────────────────────────────────────────────────────
 # YOUTUBE MP3 EXTRACTION ENDPOINT
 # GET /api/mp3?url=<youtube_url>
-# Downloads audio and converts to MP3 via ffmpeg, then streams to client
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/api/mp3', methods=['GET'])
 def download_mp3():
@@ -263,7 +259,6 @@ def download_mp3():
         return jsonify({'error': f'MP3 extraction error: {str(e)}'}), 500
 
     if not os.path.exists(final_path):
-        # Try to find any mp3 in tmpdir
         for fname in os.listdir(tmpdir):
             if fname.endswith('.mp3'):
                 final_path = os.path.join(tmpdir, fname)
