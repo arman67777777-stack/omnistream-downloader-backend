@@ -8,6 +8,7 @@ from flask_cors import CORS
 import yt_dlp
 
 app = Flask(__name__)
+
 # Allow all origins (lock this down to your domain in production)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
@@ -37,7 +38,7 @@ def normalize_url(url):
         try:
             import urllib.request
             req = urllib.request.Request(
-                url,
+                url, 
                 headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             )
             with urllib.request.urlopen(req) as response:
@@ -51,7 +52,7 @@ def normalize_url(url):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def health():
-    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.2'}), 200
+    return jsonify({'status': 'OmniStream AI Backend running', 'version': '1.0.3'}), 200
 
 @app.route('/api/health', methods=['GET'])
 def api_health():
@@ -68,14 +69,12 @@ def get_info():
         return jsonify({'error': 'No URL provided'}), 400
     
     url = normalize_url(raw_url)
-
     ydl_opts = get_base_ydl_opts()
     ydl_opts.update({
         'skip_download': True,
         'extract_flat': False,
-        'format': 'bestvideo+bestaudio/best',
     })
-
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -89,6 +88,7 @@ def get_info():
 
     raw_formats = info.get('formats', [])
     formats = []
+    
     for f in raw_formats:
         vcodec = f.get('vcodec', 'none')
         acodec = f.get('acodec', 'none')
@@ -106,7 +106,7 @@ def get_info():
 
         if protocol in ('m3u8', 'm3u8_native', 'f4m'):
             continue
-
+            
         if vcodec != 'none' and height:
             formats.append({
                 'format_id': format_id,
@@ -121,6 +121,19 @@ def get_info():
                 'tbr': tbr,
                 'vbr': vbr,
                 'abr': abr,
+            })
+
+    if not formats:
+        for f in raw_formats:
+            formats.append({
+                'format_id': f.get('format_id', ''),
+                'ext': f.get('ext', 'mp4'),
+                'vcodec': f.get('vcodec', 'none'),
+                'acodec': f.get('acodec', 'none'),
+                'height': f.get('height'),
+                'width': f.get('width'),
+                'filesize': f.get('filesize') or f.get('filesize_approx'),
+                'format_note': f.get('format_note', ''),
             })
 
     formats.sort(key=lambda x: x.get('height', 0), reverse=True)
@@ -138,7 +151,6 @@ def get_info():
         'webpage_url': info.get('webpage_url', url),
         'formats': formats,
     }
-
     return jsonify(response_data), 200
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -149,13 +161,14 @@ def get_info():
 def download_video():
     raw_url = request.args.get('url', '').strip()
     format_id = request.args.get('format_id', 'bestvideo+bestaudio/best').strip()
+    
     if not raw_url:
         return jsonify({'error': 'No URL provided'}), 400
-
+        
     url = normalize_url(raw_url)
     tmpdir = tempfile.mkdtemp()
     output_template = os.path.join(tmpdir, '%(title)s.%(ext)s')
-
+    
     ydl_opts = get_base_ydl_opts()
     ydl_opts.update({
         'format': format_id + '+bestaudio/best' if 'bestaudio' not in format_id else format_id,
@@ -166,7 +179,7 @@ def download_video():
             'preferedformat': 'mp4',
         }],
     })
-
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -209,7 +222,7 @@ def download_video():
         'Content-Type': 'video/mp4',
         'X-Content-Type-Options': 'nosniff',
     }
-
+    
     return Response(
         stream_with_context(generate()),
         headers=headers,
@@ -225,11 +238,11 @@ def download_mp3():
     raw_url = request.args.get('url', '').strip()
     if not raw_url:
         return jsonify({'error': 'No URL provided'}), 400
-
+        
     url = normalize_url(raw_url)
     tmpdir = tempfile.mkdtemp()
     output_template = os.path.join(tmpdir, '%(title)s.%(ext)s')
-
+    
     ydl_opts = get_base_ydl_opts()
     ydl_opts.update({
         'format': 'bestaudio/best',
@@ -246,7 +259,7 @@ def download_mp3():
             }
         ],
     })
-
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -288,7 +301,7 @@ def download_mp3():
         'Content-Type': 'audio/mpeg',
         'X-Content-Type-Options': 'nosniff',
     }
-
+    
     return Response(
         stream_with_context(generate()),
         headers=headers,
